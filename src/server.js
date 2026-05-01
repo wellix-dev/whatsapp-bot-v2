@@ -7,20 +7,20 @@ const session = require('express-session');
 const twilio = require('twilio');
 
 const Booking = require('./models/Booking');
+const TimeSlot = require('./models/TimeSlot');
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// ✅ session برای پنل ادمین
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'secret123',
+  secret: 'secret123',
   resave: false,
   saveUninitialized: true,
 }));
 
 const PORT = process.env.PORT || 3000;
 
-// 🔌 اتصال MongoDB
+// 🔌 MongoDB
 mongoose.connect(process.env.MONGO_URI, {
   family: 4,
   serverSelectionTimeoutMS: 10000
@@ -29,9 +29,7 @@ mongoose.connect(process.env.MONGO_URI, {
 .catch(err => console.error('❌ MongoDB Error:', err.message));
 
 
-// =======================
-// 🔐 ADMIN LOGIN
-// =======================
+// ================= ADMIN =================
 
 app.get('/admin/login', (req, res) => {
   res.send(`
@@ -55,11 +53,6 @@ app.post('/admin/login', (req, res) => {
   res.send('Invalid credentials');
 });
 
-
-// =======================
-// 📊 ADMIN DASHBOARD
-// =======================
-
 app.get('/admin/dashboard', async (req, res) => {
   if (!req.session.isAdmin) {
     return res.redirect('/admin/login');
@@ -75,6 +68,7 @@ app.get('/admin/dashboard', async (req, res) => {
       <div style="margin-bottom:20px;">
         📞 ${b.phone}<br/>
         📅 ${b.date || '-'}<br/>
+        ⏰ ${b.time || '-'}<br/>
         💆 ${b.service || '-'}<br/>
         📌 Status: ${b.step}<br/>
         <a href="/admin/approve/${b._id}">Approve</a> |
@@ -83,11 +77,6 @@ app.get('/admin/dashboard', async (req, res) => {
     `).join('')}
   `);
 });
-
-
-// =======================
-// ✅ APPROVE / ❌ CANCEL
-// =======================
 
 app.get('/admin/approve/:id', async (req, res) => {
   await Booking.findByIdAndUpdate(req.params.id, { step: 'approved' });
@@ -105,16 +94,12 @@ app.get('/admin/logout', (req, res) => {
 });
 
 
-// =======================
-// 📩 WHATSAPP WEBHOOK
-// =======================
+// ================= WHATSAPP =================
 
 app.post('/webhook', async (req, res) => {
   try {
     const message = req.body.Body?.trim();
     const from = req.body.From;
-
-    console.log('📩 Message:', message);
 
     const twiml = new twilio.twiml.MessagingResponse();
 
@@ -123,20 +108,15 @@ app.post('/webhook', async (req, res) => {
       step: { $ne: 'done' }
     });
 
-    // 🟢 شروع
+    // شروع
     if (message?.toLowerCase() === 'hi') {
       await Booking.deleteMany({ phone: from, step: { $ne: 'done' } });
 
-      twiml.message(`
-Welcome to Wellix Massage
-
-1. Book a massage
-      `);
-
+      twiml.message(`Welcome\n1. Book a massage`);
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 🟢 شروع booking
+    // شروع booking
     if (message === '1') {
       if (existing) {
         twiml.message('You already have an active booking.');
@@ -148,27 +128,70 @@ Welcome to Wellix Massage
         step: 'date'
       });
 
-      twiml.message('Enter your preferred date (e.g. 2026-05-10):');
+      twiml.message('Enter date (YYYY-MM-DD):');
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 🟡 گرفتن تاریخ
+    // 📅 تاریخ
     if (existing && existing.step === 'date') {
       existing.date = message;
+      existing.step = 'time';
+      await existing.save();
+
+      const slots = await TimeSlot.find({
+        date: message,
+        isBooked: false
+      });
+
+      if (slots.length === 0) {
+        twiml.message('No available times');
+        return res.type('text/xml').send(twiml.toString());
+      }
+
+      let list = 'Available times:\n';
+      slots.forEach((s, i) => {
+        list += `${i + 1}. ${s.time}\n`;
+      });
+
+      twiml.message(list);
+      return res.type('text/xml').send(twiml.toString());
+    }
+
+    // ⏰ انتخاب ساعت
+    if (existing && existing.step === 'time') {
+      const slots = await TimeSlot.find({
+        date: existing.date,
+        isBooked: false
+      });
+
+      const index = parseInt(message) - 1;
+      const selected = slots[index];
+
+      if (!selected) {
+        twiml.message('Invalid choice');
+        return res.type('text/xml').send(twiml.toString());
+      }
+
+      selected.isBooked = true;
+      await selected.save();
+
+      existing.time = selected.time;
+      existing.slotId = selected._id;
       existing.step = 'service';
       await existing.save();
 
       twiml.message(`
+Time: ${selected.time}
+
 Choose service:
 - Swedish
 - Deep Tissue
-- Relaxation
       `);
 
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 🟡 گرفتن سرویس
+    // 💆 سرویس
     if (existing && existing.step === 'service') {
       existing.service = message;
       existing.step = 'done';
@@ -178,38 +201,30 @@ Choose service:
 Booking confirmed
 
 Date: ${existing.date}
+Time: ${existing.time}
 Service: ${existing.service}
       `);
 
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 🔁 fallback
-    twiml.message(`
-Please choose:
-
-1. Book a massage
-    `);
-
+    twiml.message('Send hi to start');
     res.type('text/xml').send(twiml.toString());
 
-  } catch (error) {
-    console.error('❌ Error:', error.message);
-    res.status(500).send('Server error');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error');
   }
 });
 
 
-// =======================
-// 🟢 TEST ROUTE
-// =======================
+// ================= TEST =================
 
 app.get('/', (req, res) => {
-  res.send('WhatsApp Bot Running');
+  res.send('Bot running');
 });
 
 
-// 🚀 RUN SERVER
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Server running on ${PORT}`);
 });
