@@ -4,9 +4,9 @@ const bookingSchema = new mongoose.Schema({
   phone: String,
   service: String,
   date: String,
-  status: {
+  step: {
     type: String,
-    default: 'pending'
+    default: 'start'
   }
 }, { timestamps: true });
 
