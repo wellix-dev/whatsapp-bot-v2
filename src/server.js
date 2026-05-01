@@ -31,14 +31,20 @@ app.post('/webhook', async (req, res) => {
 
     const twiml = new twilio.twiml.MessagingResponse();
 
-    // 🔍 بررسی booking فعال
-    const existing = await Booking.findOne({
+    // 🔍 booking فعال
+    let existing = await Booking.findOne({
       phone: from,
       step: { $ne: 'done' }
     });
 
-    // 🟢 شروع
+    // 🟢 شروع (ریست کامل)
     if (message?.toLowerCase() === 'hi') {
+
+      await Booking.deleteMany({
+        phone: from,
+        step: { $ne: 'done' }
+      });
+
       twiml.message(`
 Welcome to Wellix Massage 🌿
 
@@ -50,6 +56,12 @@ Welcome to Wellix Massage 🌿
 
     // 🟢 شروع booking
     if (message === '1') {
+
+      if (existing) {
+        twiml.message('⚠️ You already have an active booking. Please complete it.');
+        return res.type('text/xml').send(twiml.toString());
+      }
+
       await Booking.create({
         phone: from,
         step: 'date'
@@ -60,7 +72,7 @@ Welcome to Wellix Massage 🌿
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 🟡 مرحله گرفتن تاریخ
+    // 🟡 مرحله تاریخ
     if (existing && existing.step === 'date') {
       existing.date = message;
       existing.step = 'service';
@@ -77,7 +89,7 @@ Welcome to Wellix Massage 🌿
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 🟡 مرحله گرفتن سرویس
+    // 🟡 مرحله سرویس
     if (existing && existing.step === 'service') {
       existing.service = message;
       existing.step = 'done';
