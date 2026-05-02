@@ -1,9 +1,12 @@
+// models/TimeSlot.js
 const mongoose = require('mongoose');
 
 const timeSlotSchema = new mongoose.Schema({
-  date: String,
-  time: String,
-  isBooked: { type: Boolean, default: false }
+  date: { type: String, required: true },   // تاریخ (مثلاً "2026-05-05")
+  time: { type: String, required: true },   // زمان (مثلاً "10:00 AM")
+  isBooked: { type: Boolean, default: false }, // وضعیت رزرو
 });
 
-module.exports = mongoose.model('TimeSlot', timeSlotSchema);
+const TimeSlot = mongoose.model('TimeSlot', timeSlotSchema);
+
+module.exports = TimeSlot;

@@ -13,7 +13,6 @@ const TimeSlot = require('./models/TimeSlot');
 const app = express();
 
 // ================= MIDDLEWARE =================
-
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
@@ -25,7 +24,6 @@ app.use(session({
 }));
 
 // ================= DB =================
-
 mongoose.connect(process.env.MONGO_URI, {
   family: 4,
   serverSelectionTimeoutMS: 10000
@@ -38,7 +36,7 @@ mongoose.connect(process.env.MONGO_URI, {
 // 📅 گرفتن slot ها
 app.get('/api/slots', async (req, res) => {
   try {
-    const { date } = req.query;
+    const { date } = req.query;  // این خط تاریخ رو از URL میگیره
 
     console.log("📅 Requested date:", date);
 
@@ -48,6 +46,10 @@ app.get('/api/slots', async (req, res) => {
     });
 
     console.log("📊 Slots found:", slots.length);
+
+    if (!slots.length) {
+      return res.status(404).json({ message: 'No available slots for this date' });
+    }
 
     res.json(slots);
   } catch (err) {
