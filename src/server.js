@@ -12,7 +12,8 @@ const TimeSlot = require('./models/TimeSlot');
 
 const app = express();
 
-// ✅ middleware
+// ================= MIDDLEWARE =================
+
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
@@ -23,9 +24,7 @@ app.use(session({
   saveUninitialized: true,
 }));
 
-const PORT = process.env.PORT || 3000;
-
-// ================= DATABASE =================
+// ================= DB =================
 
 mongoose.connect(process.env.MONGO_URI, {
   family: 4,
@@ -34,26 +33,30 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(() => console.log('✅ MongoDB Connected'))
 .catch(err => console.error('❌ MongoDB Error:', err.message));
 
-
-// ================= API (FOR REACT) =================
+// ================= API =================
 
 // 📅 گرفتن slot ها
 app.get('/api/slots', async (req, res) => {
   try {
     const { date } = req.query;
 
+    console.log("📅 Requested date:", date);
+
     const slots = await TimeSlot.find({
-      date,
+      date: date,
       isBooked: false
     });
 
+    console.log("📊 Slots found:", slots.length);
+
     res.json(slots);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// 📥 ثبت booking از سایت
+// 📥 ثبت booking
 app.post('/api/book', async (req, res) => {
   try {
     const { date, time, service, name, phone } = req.body;
@@ -86,7 +89,6 @@ app.post('/api/book', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 
 // ================= ADMIN =================
 
@@ -129,7 +131,6 @@ app.get('/admin/dashboard', async (req, res) => {
         📅 ${b.date}<br/>
         ⏰ ${b.time}<br/>
         💆 ${b.service}<br/>
-        📌 Status: ${b.step}<br/>
       </div>
     `).join('')}
   `);
@@ -140,62 +141,38 @@ app.get('/admin/logout', (req, res) => {
   res.redirect('/admin/login');
 });
 
-
 // ================= WHATSAPP =================
 
 app.post('/webhook', async (req, res) => {
   try {
     const message = req.body.Body?.trim();
-    const from = req.body.From;
-
     const twiml = new twilio.twiml.MessagingResponse();
 
-    // 👋 شروع
     if (message?.toLowerCase() === 'hi') {
-      twiml.message(`
-Welcome to Wellix Massage 👋
+      twiml.message(`Welcome 👋
 
 1. View Services
 2. Book Appointment
-3. Chat with Assistant
-      `);
+3. Chat AI`);
 
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 💆 services
     if (message === '1') {
-      twiml.message(`
-Our Services:
-
-- Swedish Massage (£50)
-- Deep Tissue (£60)
-- Relaxation (£45)
-      `);
-
+      twiml.message(`Services:
+- Swedish
+- Deep Tissue
+- Relaxation`);
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 🌐 رفتن به سایت
     if (message === '2') {
-      twiml.message(`
-Book here:
-https://your-frontend-url.com
-      `);
-
+      twiml.message(`Book here:
+https://your-frontend-url.com`);
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 🤖 AI placeholder
-    if (message === '3') {
-      twiml.message(`
-Ask your question about massage...
-      `);
-
-      return res.type('text/xml').send(twiml.toString());
-    }
-
-    twiml.message('Send "hi" to start');
+    twiml.message('Send "hi"');
     res.type('text/xml').send(twiml.toString());
 
   } catch (err) {
@@ -204,15 +181,15 @@ Ask your question about massage...
   }
 });
 
-
 // ================= ROOT =================
 
 app.get('/', (req, res) => {
-  res.send('Server running');
+  res.send('Server is running');
 });
 
+// ================= START =================
 
-// ================= RUN =================
+const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
