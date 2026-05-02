@@ -5,12 +5,17 @@ const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const session = require('express-session');
 const twilio = require('twilio');
+const cors = require('cors');
 
 const Booking = require('./models/Booking');
 const TimeSlot = require('./models/TimeSlot');
 
 const app = express();
+
+// ✅ middleware
+app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
 
 app.use(session({
   secret: 'secret123',
@@ -20,13 +25,67 @@ app.use(session({
 
 const PORT = process.env.PORT || 3000;
 
-// 🔌 MongoDB
+// ================= DATABASE =================
+
 mongoose.connect(process.env.MONGO_URI, {
   family: 4,
   serverSelectionTimeoutMS: 10000
 })
 .then(() => console.log('✅ MongoDB Connected'))
 .catch(err => console.error('❌ MongoDB Error:', err.message));
+
+
+// ================= API (FOR REACT) =================
+
+// 📅 گرفتن slot ها
+app.get('/api/slots', async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    const slots = await TimeSlot.find({
+      date,
+      isBooked: false
+    });
+
+    res.json(slots);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// 📥 ثبت booking از سایت
+app.post('/api/book', async (req, res) => {
+  try {
+    const { date, time, service, name, phone } = req.body;
+
+    const slot = await TimeSlot.findOne({
+      date,
+      time,
+      isBooked: false
+    });
+
+    if (!slot) {
+      return res.status(400).json({ error: 'Slot not available' });
+    }
+
+    slot.isBooked = true;
+    await slot.save();
+
+    await Booking.create({
+      phone,
+      service,
+      date,
+      time,
+      step: 'done'
+    });
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 
 // ================= ADMIN =================
@@ -67,25 +126,13 @@ app.get('/admin/dashboard', async (req, res) => {
     ${bookings.map(b => `
       <div style="margin-bottom:20px;">
         📞 ${b.phone}<br/>
-        📅 ${b.date || '-'}<br/>
-        ⏰ ${b.time || '-'}<br/>
-        💆 ${b.service || '-'}<br/>
+        📅 ${b.date}<br/>
+        ⏰ ${b.time}<br/>
+        💆 ${b.service}<br/>
         📌 Status: ${b.step}<br/>
-        <a href="/admin/approve/${b._id}">Approve</a> |
-        <a href="/admin/cancel/${b._id}">Cancel</a>
       </div>
     `).join('')}
   `);
-});
-
-app.get('/admin/approve/:id', async (req, res) => {
-  await Booking.findByIdAndUpdate(req.params.id, { step: 'approved' });
-  res.redirect('/admin/dashboard');
-});
-
-app.get('/admin/cancel/:id', async (req, res) => {
-  await Booking.findByIdAndUpdate(req.params.id, { step: 'cancelled' });
-  res.redirect('/admin/dashboard');
 });
 
 app.get('/admin/logout', (req, res) => {
@@ -103,112 +150,52 @@ app.post('/webhook', async (req, res) => {
 
     const twiml = new twilio.twiml.MessagingResponse();
 
-    let existing = await Booking.findOne({
-      phone: from,
-      step: { $ne: 'done' }
-    });
-
-    // شروع
+    // 👋 شروع
     if (message?.toLowerCase() === 'hi') {
-      await Booking.deleteMany({ phone: from, step: { $ne: 'done' } });
+      twiml.message(`
+Welcome to Wellix Massage 👋
 
-      twiml.message(`Welcome\n1. Book a massage`);
+1. View Services
+2. Book Appointment
+3. Chat with Assistant
+      `);
+
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // شروع booking
+    // 💆 services
     if (message === '1') {
-      if (existing) {
-        twiml.message('You already have an active booking.');
-        return res.type('text/xml').send(twiml.toString());
-      }
-
-      await Booking.create({
-        phone: from,
-        step: 'date'
-      });
-
-      twiml.message('Enter date (YYYY-MM-DD):');
-      return res.type('text/xml').send(twiml.toString());
-    }
-
-    // 📅 تاریخ
-    if (existing && existing.step === 'date') {
-      existing.date = message;
-      existing.step = 'time';
-      await existing.save();
-
-      const slots = await TimeSlot.find({
-        date: message,
-        isBooked: false
-      });
-
-      if (slots.length === 0) {
-        twiml.message('No available times');
-        return res.type('text/xml').send(twiml.toString());
-      }
-
-      let list = 'Available times:\n';
-      slots.forEach((s, i) => {
-        list += `${i + 1}. ${s.time}\n`;
-      });
-
-      twiml.message(list);
-      return res.type('text/xml').send(twiml.toString());
-    }
-
-    // ⏰ انتخاب ساعت
-    if (existing && existing.step === 'time') {
-      const slots = await TimeSlot.find({
-        date: existing.date,
-        isBooked: false
-      });
-
-      const index = parseInt(message) - 1;
-      const selected = slots[index];
-
-      if (!selected) {
-        twiml.message('Invalid choice');
-        return res.type('text/xml').send(twiml.toString());
-      }
-
-      selected.isBooked = true;
-      await selected.save();
-
-      existing.time = selected.time;
-      existing.slotId = selected._id;
-      existing.step = 'service';
-      await existing.save();
-
       twiml.message(`
-Time: ${selected.time}
+Our Services:
 
-Choose service:
-- Swedish
-- Deep Tissue
+- Swedish Massage (£50)
+- Deep Tissue (£60)
+- Relaxation (£45)
       `);
 
       return res.type('text/xml').send(twiml.toString());
     }
 
-    // 💆 سرویس
-    if (existing && existing.step === 'service') {
-      existing.service = message;
-      existing.step = 'done';
-      await existing.save();
-
+    // 🌐 رفتن به سایت
+    if (message === '2') {
       twiml.message(`
-Booking confirmed
-
-Date: ${existing.date}
-Time: ${existing.time}
-Service: ${existing.service}
+Book here:
+https://your-frontend-url.com
       `);
 
       return res.type('text/xml').send(twiml.toString());
     }
 
-    twiml.message('Send hi to start');
+    // 🤖 AI placeholder
+    if (message === '3') {
+      twiml.message(`
+Ask your question about massage...
+      `);
+
+      return res.type('text/xml').send(twiml.toString());
+    }
+
+    twiml.message('Send "hi" to start');
     res.type('text/xml').send(twiml.toString());
 
   } catch (err) {
@@ -218,13 +205,15 @@ Service: ${existing.service}
 });
 
 
-// ================= TEST =================
+// ================= ROOT =================
 
 app.get('/', (req, res) => {
-  res.send('Bot running');
+  res.send('Server running');
 });
 
 
+// ================= RUN =================
+
 app.listen(PORT, () => {
-  console.log(`Server running on ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
